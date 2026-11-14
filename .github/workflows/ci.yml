@@ -1,0 +1,153 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # x64: one build with every backend (CPU, Vulkan, CUDA). arm64: CPU only (NEON), which also compiles the
+          # GPU stubs. macOS takes Highway from Homebrew, the other legs from the wrap.
+          - name: linux-x64
+            os: ubuntu-24.04
+            cc: gcc
+            vulkan: true
+            cuda: true
+          - name: windows-x64
+            os: windows-2025
+            cc: msvc
+            vulkan: true
+            cuda: true
+          - name: linux-arm64
+            os: ubuntu-24.04-arm
+            cc: gcc
+            vulkan: false
+            cuda: false
+          - name: macos-arm64
+            os: macos-latest
+            cc: clang
+            vulkan: false
+            cuda: false
+    runs-on: ${{ matrix.os }}
+    env:
+      CCACHE_BASEDIR: ${{ github.workspace }}
+      CCACHE_COMPILERCHECK: content
+      CCACHE_DIR: ${{ github.workspace }}/.ccache
+      CC: ${{ matrix.cc == 'clang' && 'clang' || matrix.cc == 'msvc' && 'cl' || 'gcc' }}
+      CXX: ${{ matrix.cc == 'clang' && 'clang++' || matrix.cc == 'msvc' && 'cl' || 'g++' }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache pkg-config glslang-tools
+          python -m pip install meson==1.8.3 ninja==1.11.1.3
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: |
+          brew install ccache highway
+          python -m pip install meson==1.8.3 ninja==1.11.1.3
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install meson==1.8.3 ninja==1.11.1.3
+          choco install ccache -y
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Restore Vulkan headers
+        if: matrix.vulkan
+        id: vulkan-headers
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vulkan-headers
+          key: vulkan-headers-vulkan-sdk-1.4.363.0-${{ runner.os }}
+      - name: Fetch Vulkan headers
+        if: matrix.vulkan
+        shell: bash
+        run: |
+          # VSVulkan4.h needs Vulkan 1.4 headers (vkCmdPushConstants2, vkMapMemory2, ...); distro and vcpkg copies lag.
+          # Outside the checkout: meson rejects an absolute include path inside the source tree.
+          if [ ! -f "$RUNNER_TEMP/vulkan-headers/include/vulkan/vulkan_core.h" ]; then
+            git clone --depth 1 --branch vulkan-sdk-1.4.363.0 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+          fi
+          dir="$RUNNER_TEMP/vulkan-headers/include"
+          if [ "$RUNNER_OS" = "Windows" ]; then dir="$(cygpath -m "$dir")"; fi
+          echo "VULKAN_HEADERS_DIR=$dir" >> "$GITHUB_ENV"
+      - name: Install CUDA toolkit
+        if: matrix.cuda
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: '13.3.1'  # 12.x rejects the runner's Visual Studio 2026 (MSVC 14.5x)
+          # Only what the build needs (nvcc and the runtime), not the full toolkit; the action caches its downloads.
+          method: network
+          sub-packages: ${{ runner.os == 'Windows' && '["nvcc", "cudart", "visual_studio_integration"]' || '["nvcc", "cudart", "cudart-dev"]' }}
+          use-github-cache: true
+      - name: Install VapourSynth R80 SDK
+        shell: bash
+        run: python -m pip install 'vapoursynth>=80' numpy
+      - name: Restore wrap downloads
+        uses: actions/cache@v4
+        with:
+          path: subprojects/packagecache
+          key: wraps-${{ hashFiles('subprojects/*.wrap') }}
+      - name: Restore ccache
+        uses: actions/cache@v4
+        with:
+          path: .ccache
+          key: ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.cc }}-${{ matrix.cuda }}-cuda13.3.1-${{ hashFiles('meson.build', 'meson_options.txt', 'TCanny/shaders/*.glsl') }}
+          restore-keys: |
+            ccache-${{ runner.os }}-${{ runner.arch }}-${{ matrix.cc }}-
+      - name: Configure
+        shell: bash
+        run: |
+          ccache --zero-stats || true
+          # Git Bash puts its own /usr/bin/link.exe before MSVC's; meson must find the MSVC linker.
+          if [ "$RUNNER_OS" = "Windows" ]; then export PATH="$(dirname "$(command -v cl)"):$PATH"; fi
+          vulkan_opt=''
+          if [ -n "${VULKAN_HEADERS_DIR:-}" ]; then vulkan_opt="-Dvulkan_headers=$VULKAN_HEADERS_DIR"; fi
+          meson setup build -Dcuda=${{ matrix.cuda }} -Dvulkan=${{ matrix.vulkan }} -Dtests=true -Dbuildtype=debugoptimized $vulkan_opt
+      - name: Build
+        run: meson compile -C build -j 2
+      - name: Validate Vulkan shader
+        if: runner.os == 'Linux'
+        run: |
+          for g in TCanny/shaders/*.comp.glsl; do glslangValidator -V -S comp $g -o /tmp/$(basename $g).spv; done
+      - name: Test
+        run: meson test -C build --print-errorlogs
+      - name: ABI and cache smoke check
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "Linux" ]; then
+            nm -D --defined-only build/libtcannyx.so | grep -q VapourSynthPluginInit2
+          elif [ "$RUNNER_OS" = "macOS" ]; then
+            nm -gU build/libtcannyx.dylib | grep -q VapourSynthPluginInit2
+          else
+            dumpbin /exports build/tcannyx.dll 2>/dev/null | findstr /C:VapourSynthPluginInit2 || true
+          fi
+          find build -maxdepth 1 -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' -o -name '*.pyd' \) | grep -q .
+          ccache --show-stats | tee ccache-stats.txt || true
+      - name: Upload CI diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: diagnostics-${{ matrix.name }}
+          path: |
+            ccache-stats.txt
+            build/meson-logs/**

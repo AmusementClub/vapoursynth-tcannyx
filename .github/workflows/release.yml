@@ -1,0 +1,174 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['r*']
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-24.04
+            name: linux-x64-cpu
+            vulkan: false
+            cuda: false
+          - os: ubuntu-24.04
+            name: linux-x64-vulkan
+            vulkan: true
+            cuda: false
+          - os: ubuntu-24.04
+            name: linux-x64-cuda
+            vulkan: true
+            cuda: true
+          - os: windows-2025
+            name: windows-x64-cpu
+            vulkan: false
+            cuda: false
+          - os: windows-2025
+            name: windows-x64-vulkan
+            vulkan: true
+            cuda: false
+          - os: ubuntu-24.04-arm
+            name: linux-arm64-cpu
+            vulkan: false
+            cuda: false
+          - os: macos-latest
+            name: macos-arm64-cpu
+            vulkan: false
+            cuda: false
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install Linux dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache pkg-config glslang-tools
+          python -m pip install meson==1.8.3 ninja==1.11.1.3
+      - name: Install macOS dependencies
+        if: runner.os == 'macOS'
+        run: python -m pip install meson==1.8.3 ninja==1.11.1.3
+      - name: Install Windows dependencies
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          python -m pip install meson==1.8.3 ninja==1.11.1.3
+          choco install ccache -y
+      - name: Set up MSVC
+        if: runner.os == 'Windows'
+        uses: ilammy/msvc-dev-cmd@v1
+        with:
+          arch: x64
+      - name: Restore Vulkan headers
+        if: matrix.vulkan
+        id: vulkan-headers
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vulkan-headers
+          key: vulkan-headers-vulkan-sdk-1.4.363.0-${{ runner.os }}
+      - name: Fetch Vulkan headers
+        if: matrix.vulkan
+        shell: bash
+        run: |
+          # VSVulkan4.h needs Vulkan 1.4 headers (vkCmdPushConstants2, vkMapMemory2, ...); distro and vcpkg copies lag.
+          # Outside the checkout: meson rejects an absolute include path inside the source tree.
+          if [ ! -f "$RUNNER_TEMP/vulkan-headers/include/vulkan/vulkan_core.h" ]; then
+            git clone --depth 1 --branch vulkan-sdk-1.4.363.0 https://github.com/KhronosGroup/Vulkan-Headers.git "$RUNNER_TEMP/vulkan-headers"
+          fi
+          dir="$RUNNER_TEMP/vulkan-headers/include"
+          if [ "$RUNNER_OS" = "Windows" ]; then dir="$(cygpath -m "$dir")"; fi
+          echo "VULKAN_HEADERS_DIR=$dir" >> "$GITHUB_ENV"
+      - name: Install CUDA toolkit
+        if: matrix.cuda
+        uses: Jimver/cuda-toolkit@v0.2.36
+        with:
+          cuda: '13.3.1'  # 12.x rejects the runner's Visual Studio 2026 (MSVC 14.5x)
+          # Only what the build needs (nvcc and the runtime), not the full toolkit; the action caches its downloads.
+          method: network
+          sub-packages: ${{ runner.os == 'Windows' && '["nvcc", "cudart", "visual_studio_integration"]' || '["nvcc", "cudart", "cudart-dev"]' }}
+          use-github-cache: true
+      - name: Install VapourSynth SDK
+        shell: bash
+        run: python -m pip install 'vapoursynth>=80' numpy
+      - name: Validate release version
+        shell: bash
+        run: |
+          project_version="$(sed -n "s/^project('TCanny', 'cpp', version: '\([^']*\)'.*/\1/p" meson.build)"
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            tag_version="${GITHUB_REF_NAME#r}"
+            test -n "$tag_version" -a "$tag_version" = "$project_version"
+          fi
+      - name: Build release
+        shell: bash
+        run: |
+          # Git Bash puts its own /usr/bin/link.exe before MSVC's; meson must find the MSVC linker.
+          if [ "$RUNNER_OS" = "Windows" ]; then export PATH="$(dirname "$(command -v cl)"):$PATH"; fi
+          vulkan_opt=''
+          if [ -n "${VULKAN_HEADERS_DIR:-}" ]; then vulkan_opt="-Dvulkan_headers=$VULKAN_HEADERS_DIR"; fi
+          # Highway always from the pinned wrap, linked statically: the artifact must not depend on a system libhwy.
+          meson setup build -Dcuda=${{ matrix.cuda }} -Dvulkan=${{ matrix.vulkan }} -Dtests=true -Dbuildtype=release --force-fallback-for=libhwy $vulkan_opt
+          meson compile -C build
+          meson test -C build --print-errorlogs
+          if [ "${{ runner.os }}" = "Linux" ]; then for g in TCanny/shaders/*.comp.glsl; do glslangValidator -V -S comp $g -o /tmp/$(basename $g).spv; done; fi
+          {
+            echo "version=${GITHUB_REF_NAME#r}"
+            echo "runner=${RUNNER_OS} ${RUNNER_ARCH}"
+            echo "meson=$(meson --version)"
+            echo "vapoursynth=$(python -c 'import vapoursynth as v; print(getattr(v, "__api_version__", "R80+"))')"
+            echo "vulkan=${{ matrix.vulkan }}"
+            echo "cuda=${{ matrix.cuda }}"
+            if command -v nvcc >/dev/null 2>&1; then nvcc --version | tail -n 1; fi
+          } > BUILD-METADATA.txt
+      - name: Package
+        shell: bash
+        run: |
+          sha256sum() { if command -v sha256sum >/dev/null 2>&1; then command sha256sum "$@"; else shasum -a 256 "$@"; fi; }
+          version="${GITHUB_REF_NAME#r}"
+          mkdir -p "dist/tcanny-${version}-${{ matrix.name }}"
+          find build -maxdepth 1 -type f \( -name '*.so' -o -name '*.dll' -o -name '*.dylib' \) -exec cp {} "dist/tcanny-${version}-${{ matrix.name }}/" \;
+          cp README.md LICENSE BUILD-METADATA.txt "dist/tcanny-${version}-${{ matrix.name }}/"
+          if [ "${{ runner.os }}" = "Windows" ]; then
+            7z a "tcanny-${version}-${{ matrix.name }}.zip" "dist/tcanny-${version}-${{ matrix.name }}" >/dev/null
+            sha256sum "tcanny-${version}-${{ matrix.name }}.zip" > "tcanny-${version}-${{ matrix.name }}.sha256"
+          else
+            tar -C dist -czf "tcanny-${version}-${{ matrix.name }}.tar.gz" "tcanny-${version}-${{ matrix.name }}"
+            sha256sum "tcanny-${version}-${{ matrix.name }}.tar.gz" > "tcanny-${version}-${{ matrix.name }}.sha256"
+          fi
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: |
+            *.tar.gz
+            *.sha256
+            *.zip
+
+  publish:
+    needs: package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+      - name: Create aggregate checksums
+        shell: bash
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > SHA256SUMS
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: dist/**
+

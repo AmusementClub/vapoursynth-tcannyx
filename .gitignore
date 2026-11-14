@@ -1,0 +1,11 @@
+build/
+build-*/
+subprojects/*
+!subprojects/*.wrap
+*.spv
+*.spv.h
+__pycache__/
+.venv/
+.ccache/
+docs/
+CLAUDE.md

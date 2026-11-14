@@ -1,0 +1,8 @@
+option('vulkan', type: 'boolean', value: true, description: 'Build the VapourSynth R80 GPU residency backend')
+option('cuda', type: 'boolean', value: false, description: 'Build the optional CUDA backend')
+option('tests', type: 'boolean', value: true, description: 'Build standalone algorithm tests')
+option('benchmarks', type: 'boolean', value: false, description: 'Build benchmark helpers')
+option('vulkan_headers', type: 'string', value: '', description: 'Vulkan header include directory for nvcc')
+option('vapoursynth_headers', type: 'string', value: '', description: 'VapourSynth R80+ header directory (including VSVulkan4.h)')
+
+option('profiling', type: 'boolean', value: false, description: 'Compile in timing and hysteresis counters (TCANNY_PROF=1 prints them); never for release builds')
