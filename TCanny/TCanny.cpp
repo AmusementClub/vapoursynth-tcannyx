@@ -266,7 +266,9 @@ void VS_CC tcannyCreate(const VSMap *in, VSMap *out, void *, VSCore *core, const
 } // namespace
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin *plugin, const VSPLUGINAPI *vspapi) {
-    const int apiVersion = vspapi->getAPIVersion() >= VS_MAKE_VERSION(4, 3) ? VAPOURSYNTH_API_VERSION : VS_MAKE_VERSION(4, 2);
+    // Below API 4.3 only the CPU path runs, and it needs nothing newer than 4.0; a core refuses a plugin that asks for
+    // a newer minor than its own, so asking for 4.0 keeps the plugin loadable on R55+ and VapourSynth Classic.
+    const int apiVersion = vspapi->getAPIVersion() >= VS_MAKE_VERSION(4, 3) ? VAPOURSYNTH_API_VERSION : VS_MAKE_VERSION(4, 0);
     vspapi->configPlugin("com.mystdove.tcannyx", "tcannyx", "Build an edge map using Canny edge detection (CPU, Vulkan and CUDA backends)", VS_MAKE_VERSION(TCANNY_VERSION, 0), apiVersion, 0, plugin);
     const char *clipType = vspapi->getAPIVersion() >= VS_MAKE_VERSION(4, 3) ? "vnode:all" : "vnode";
     const std::string args = std::string("clip:") + clipType + ";"

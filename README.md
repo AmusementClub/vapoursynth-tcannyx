@@ -23,7 +23,9 @@ Highlights:
 
 ## Requirements
 
-- VapourSynth R80 or newer. The GPU backends need API 4.3 (R81 or newer).
+- VapourSynth R74 or newer for the CPU backend (tested on R74 to R82). Older cores, including VapourSynth Classic,
+  should also work, because the plugin asks them only for API 4.0, but they are untested.
+- The GPU backends need API 4.3, which R80 and newer provide (tested on R81).
 - For `backend="vulkan"`: a Vulkan-capable GPU.
 - For `backend="cuda"`: an NVIDIA GPU from the Turing generation (GTX 16xx / RTX 20xx) or newer, with driver 580 or
   newer. Nothing else: the CUDA runtime is built into the plugin. Windows support is new and has not been tested on a
