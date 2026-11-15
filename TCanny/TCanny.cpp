@@ -219,13 +219,8 @@ void VS_CC tcannyCreate(const VSMap *in, VSMap *out, void *, VSCore *core, const
         else throw std::runtime_error("backend must be auto, cpu, vulkan, or cuda");
         if (data->backend != TCannyBackend::Cpu && !api43)
             throw std::runtime_error("GPU backends require VapourSynth API 4.3 (R80 or newer)");
-        if (data->backend == TCannyBackend::Cuda) {
-            if (!tcannyCudaCompiled()) throw std::runtime_error("backend=cuda requested but CUDA support was not compiled into this build");
-#ifdef _WIN32
-            // The Windows interop path (NT handles, declaring held imports with reserveGPUMemory) has never been built or run on a GPU.
-            throw std::runtime_error("backend=cuda is not supported on Windows yet; use backend=vulkan");
-#endif
-        }
+        if (data->backend == TCannyBackend::Cuda && !tcannyCudaCompiled())
+            throw std::runtime_error("backend=cuda requested but CUDA support was not compiled into this build");
         if (data->backend == TCannyBackend::Cpu && gpuInput) throw std::runtime_error("backend=cpu requires a CPU node; call std.GPUDownload first");
         if (data->backend != TCannyBackend::Cpu && !gpuInput) throw std::runtime_error("GPU backend requires a GPU node; call std.GPUUpload first");
         data->gpuOutput = data->backend != TCannyBackend::Cpu;
