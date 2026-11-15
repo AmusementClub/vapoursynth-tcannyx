@@ -81,7 +81,16 @@ if get_option('cuda')
     cuda_include_args += ['-I' + vulkan_headers]
   endif
   cuda_host_flags = []
-  if host_machine.system() != 'windows'
+  if host_machine.system() == 'windows'
+    # nvcc defaults the host compiler to /MT; use the same CRT as the rest of the build.
+    vscrt = get_option('b_vscrt')
+    if vscrt == 'from_buildtype' or vscrt == 'static_from_buildtype'
+      vscrt = (vscrt.startswith('static') ? 'mt' : 'md') + (get_option('buildtype') == 'debug' ? 'd' : '')
+    endif
+    if vscrt != 'none'
+      cuda_host_flags += ['-Xcompiler=/' + vscrt.to_upper()]
+    endif
+  else
     cuda_host_flags += ['-Xcompiler=-fPIC']
   endif
   if get_option('profiling')

@@ -96,7 +96,7 @@ jobs:
           cuda: '13.3.1'  # 12.x rejects the runner's Visual Studio 2026 (MSVC 14.5x)
           # Only what the build needs (nvcc and the runtime), not the full toolkit; the action caches its downloads.
           method: network
-          sub-packages: ${{ runner.os == 'Windows' && '["nvcc", "cudart", "visual_studio_integration"]' || '["nvcc", "cudart", "cudart-dev"]' }}
+          sub-packages: ${{ runner.os == 'Windows' && '["nvcc", "crt", "nvvm", "cudart", "visual_studio_integration"]' || '["nvcc", "cudart", "cudart-dev"]' }}
           use-github-cache: true
       - name: Install VapourSynth SDK
         shell: bash

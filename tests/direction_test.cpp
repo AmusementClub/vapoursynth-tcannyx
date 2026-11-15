@@ -1,6 +1,7 @@
 // Mode-0 direction bins: the fast path (directionBin) must equal upstream's atan2 path (directionBinExact) lane for lane
 // on every compiled Highway target this CPU supports. Inputs: random magnitudes over 1e-35..1e35, dense sweeps across
 // the four bin boundaries, every integer pair in [-1024, 1024]^2 (and halves), and special values.
+#define _USE_MATH_DEFINES  // M_PI on MSVC; must precede the first <cmath>/<math.h>
 #undef HWY_TARGET_INCLUDE
 #define HWY_TARGET_INCLUDE "direction_test.cpp"
 #include "cpu_simd_targets.h"
