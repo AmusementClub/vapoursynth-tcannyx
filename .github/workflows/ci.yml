@@ -139,9 +139,16 @@ jobs:
           elif [ "$RUNNER_OS" = "macOS" ]; then
             nm -gU build/libtcannyx.dylib | grep -q VapourSynthPluginInit2
           else
-            dumpbin /exports build/tcannyx.dll 2>/dev/null | findstr /C:VapourSynthPluginInit2 || true
+            # Git Bash would rewrite /exports as a path.
+            MSYS_NO_PATHCONV=1 dumpbin /exports build/tcannyx.dll | grep -q VapourSynthPluginInit2
           fi
           find build -maxdepth 1 -type f \( -name '*.so' -o -name '*.dylib' -o -name '*.dll' -o -name '*.pyd' \) | grep -q .
+          # The release ships one plugin per platform: it must not need the CUDA runtime or a Vulkan loader.
+          if [ "$RUNNER_OS" = "Linux" ]; then deps="$(readelf -d build/libtcannyx.so | grep NEEDED)"
+          elif [ "$RUNNER_OS" = "macOS" ]; then deps="$(otool -L build/libtcannyx.dylib)"
+          else deps="$(MSYS_NO_PATHCONV=1 dumpbin /dependents build/tcannyx.dll)"; fi
+          echo "$deps"
+          if echo "$deps" | grep -iqE 'cudart|nvcuda|libcuda|vulkan'; then echo "::error::unexpected GPU runtime dependency"; exit 1; fi
           ccache --show-stats | tee ccache-stats.txt || true
       - name: Upload CI diagnostics
         if: always()

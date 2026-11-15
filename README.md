@@ -25,7 +25,9 @@ Highlights:
 
 - VapourSynth R80 or newer. The GPU backends need API 4.3 (R81 or newer).
 - For `backend="vulkan"`: a Vulkan-capable GPU.
-- For `backend="cuda"`: Linux, and an NVIDIA GPU with a recent driver.
+- For `backend="cuda"`: an NVIDIA GPU from the Turing generation (GTX 16xx / RTX 20xx) or newer, with driver 580 or
+  newer. Nothing else: the CUDA runtime is built into the plugin. Windows support is new and has not been tested on a
+  GPU yet; Linux is the tested platform.
 
 ## Installation
 
@@ -38,10 +40,11 @@ core.std.LoadPlugin("/path/to/libtcannyx.so")
 
 | Package | Backends |
 |---|---|
-| `linux-x64-cpu`, `windows-x64-cpu` | CPU |
-| `linux-x64-vulkan`, `windows-x64-vulkan` | CPU, Vulkan |
-| `linux-x64-cuda` | CPU, Vulkan, CUDA |
-| `linux-arm64-cpu`, `macos-arm64-cpu` | CPU (NEON) |
+| `linux-x64`, `windows-x64` | CPU, Vulkan, CUDA |
+| `linux-arm64`, `macos-arm64` | CPU (NEON) |
+
+There is one plugin per platform. It loads on any machine, with or without a GPU: a backend that the machine cannot run
+fails only when you select it.
 
 The plugin lives in the `tcannyx` namespace, and its file name does not clash with the original TCanny's `libtcanny`,
 so the two can be installed side by side.
@@ -145,7 +148,7 @@ which provides the headers.
 ```sh
 meson setup build -Dvulkan=false -Dcuda=false   # CPU only
 meson setup build -Dvulkan=true                 # CPU + Vulkan (needs Vulkan headers)
-meson setup build -Dvulkan=true -Dcuda=true     # CPU + Vulkan + CUDA (needs nvcc, Linux)
+meson setup build -Dvulkan=true -Dcuda=true     # CPU + Vulkan + CUDA (needs nvcc, CUDA 13)
 meson compile -C build
 meson test -C build
 ```
@@ -159,7 +162,8 @@ Notes:
 - **Mismatched SDKs.** If the compiler picks up a different VapourSynth SDK than your Python package, point
   `-Dvapoursynth_headers=` at the folder that contains `VSVulkan4.h`.
 - **CUDA backend.** It shares memory with VapourSynth's Vulkan frames, so it needs an NVIDIA GPU whose CUDA and Vulkan
-  devices match. It is Linux only for now.
+  devices match. The CUDA runtime is linked statically. `-Dnvcc_archs=` picks the GPU architectures to compile for
+  (default: every one from `75` to `120`); `-Dnvcc_archs=120` builds faster for a single GPU.
 
 ## License
 

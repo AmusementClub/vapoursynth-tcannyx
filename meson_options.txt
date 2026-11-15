@@ -2,6 +2,7 @@ option('vulkan', type: 'boolean', value: true, description: 'Build the VapourSyn
 option('cuda', type: 'boolean', value: false, description: 'Build the optional CUDA backend')
 option('tests', type: 'boolean', value: true, description: 'Build standalone algorithm tests')
 option('benchmarks', type: 'boolean', value: false, description: 'Build benchmark helpers')
+option('nvcc_archs', type: 'array', value: ['75', '80', '86', '89', '90', '100', '120'], description: 'CUDA SM architectures to compile for (PTX of the last one is embedded too)')
 option('vulkan_headers', type: 'string', value: '', description: 'Vulkan header include directory for nvcc')
 option('vapoursynth_headers', type: 'string', value: '', description: 'VapourSynth R80+ header directory (including VSVulkan4.h)')
 

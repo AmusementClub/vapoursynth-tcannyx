@@ -1,4 +1,4 @@
-project('TCanny', 'cpp', version: '0', meson_version: '>=1.3.0',
+project('TCanny', 'cpp', version: '1', meson_version: '>=1.3.0',
   default_options: ['cpp_std=c++17', 'buildtype=release', 'warning_level=2', 'b_lto=true'])
 
 cc = meson.get_compiler('cpp')
@@ -22,7 +22,8 @@ endif
 hwy = dependency('libhwy', version: '>=1.4.0', fallback: ['highway', 'hwy_dep'],
   default_options: ['default_library=static', 'contrib=disabled', 'examples=disabled', 'tests=disabled', 'test_standalone=true'])
 sources = files('TCanny/TCanny.cpp', 'TCanny/cpu_reference.cpp', 'TCanny/cpu_simd.cpp')
-project_cpp_args = []
+# The plugin version reported to VapourSynth is the release number (rN), taken from the project version.
+project_cpp_args = ['-DTCANNY_VERSION=' + meson.project_version()]
 if get_option('cuda')
   project_cpp_args += ['-DTCANNY_WITH_CUDA']
 endif
@@ -39,26 +40,31 @@ if cc.get_argument_syntax() == 'gcc'
 endif
 add_project_arguments(project_cpp_args, language: 'cpp')
 plugin_link_args = []
+plugin_deps = []
 if get_option('cuda')
   nvcc = find_program('nvcc', required: true)
-  if host_machine.system() == 'windows'
-    # Meson has no getenv(): read CUDA_PATH through Python, else use the toolkit that holds the nvcc found above.
-    cuda_path = run_command(py, '-c', 'import os; print(os.environ.get("CUDA_PATH", ""))', check: true).stdout().strip()
-    if cuda_path == ''
-      cuda_path = fs.parent(fs.parent(nvcc.full_path()))
-    endif
-    if cuda_path != '' and fs.exists(cuda_path / 'lib/x64/cudart.lib')
-      plugin_link_args += [cuda_path / 'lib/x64/cudart.lib']
-    else
-      plugin_link_args += ['cudart.lib']
-    endif
-  elif fs.exists('/usr/local/cuda/lib64/libcudart.so')
-    plugin_link_args += ['/usr/local/cuda/lib64/libcudart.so']
-  elif fs.exists('/usr/local/cuda-13.3/lib64/libcudart.so')
-    plugin_link_args += ['/usr/local/cuda-13.3/lib64/libcudart.so']
-  else
-    plugin_link_args += ['-lcudart']
+  # The CUDA runtime is linked statically, so the plugin has no libcudart / cudart64_*.dll dependency and loads on
+  # machines without CUDA: the static runtime opens the driver (libcuda.so.1 / nvcuda.dll) on the first CUDA call, and
+  # only backend="cuda" fails there. Meson has no getenv(): read CUDA_PATH through Python, else use the toolkit that
+  # holds the nvcc found above.
+  cuda_path = run_command(py, '-c', 'import os; print(os.environ.get("CUDA_PATH", ""))', check: true).stdout().strip()
+  if cuda_path == ''
+    cuda_path = fs.parent(fs.parent(nvcc.full_path()))
   endif
+  plugin_deps += cc.find_library('cudart_static', dirs: [cuda_path / 'lib64', cuda_path / 'lib/x64', cuda_path / 'lib'])
+  if host_machine.system() != 'windows'
+    plugin_deps += [dependency('threads'), cc.find_library('dl', required: false), cc.find_library('rt', required: false)]
+    # Keep the static runtime's symbols out of the plugin's dynamic symbol table.
+    plugin_link_args += cc.get_supported_link_arguments('-Wl,--exclude-libs,ALL')
+  endif
+  # SASS for each listed architecture (a cubin also runs on later minors of the same major) plus PTX of the last one,
+  # so newer GPUs JIT-compile instead of failing. Narrow it for faster local builds (-Dnvcc_archs=120).
+  cuda_arch_args = []
+  foreach arch : get_option('nvcc_archs')
+    cuda_arch_args += ['-gencode', 'arch=compute_@0@,code=sm_@0@'.format(arch)]
+  endforeach
+  cuda_ptx = get_option('nvcc_archs')[-1]
+  cuda_arch_args += ['-gencode', 'arch=compute_@0@,code=compute_@0@'.format(cuda_ptx)]
   cuda_include_args = []
   # The Python package's pkg-config file can point at an older compatibility
   # include directory. Always pass the headers selected by Meson first so
@@ -100,7 +106,7 @@ if get_option('cuda')
   cuda_object = custom_target('tcanny_cuda_object',
     input: files('TCanny/cuda_backend.cu'),
     output: cuda_object_name,
-    command: [nvcc, '-std=c++17', '-O3', '--fmad=false'] + cuda_include_args + cuda_host_flags + ['-c', '@INPUT@', '-o', '@OUTPUT@'])
+    command: [nvcc, '-std=c++17', '-O3', '--fmad=false'] + cuda_arch_args + cuda_include_args + cuda_host_flags + ['-c', '@INPUT@', '-o', '@OUTPUT@'])
   sources += cuda_object
   link_with = []
 else
@@ -142,7 +148,7 @@ else
 endif
 
 plugin_module = shared_module('tcannyx', sources,
-  dependencies: [vapoursynth, hwy],
+  dependencies: [vapoursynth, hwy] + plugin_deps,
   include_directories: [include_directories('TCanny')] + (get_option('vulkan_headers') != '' ? [include_directories(get_option('vulkan_headers'))] : []),
   link_with: link_with,
   link_args: plugin_link_args,
@@ -173,5 +179,5 @@ if get_option('tests')
     timeout: 300)
 endif
 
-summary({'VapourSynth': vapoursynth.version(), 'Highway': hwy.version(), 'Vulkan': get_option('vulkan'), 'CUDA': get_option('cuda'), 'Tests': get_option('tests')}, section: 'TCanny features')
+summary({'VapourSynth': vapoursynth.version(), 'Highway': hwy.version(), 'Vulkan': get_option('vulkan'), 'CUDA': get_option('cuda'), 'CUDA architectures': get_option('cuda') ? ' '.join(get_option('nvcc_archs')) : '-', 'Tests': get_option('tests')}, section: 'TCanny features')
 

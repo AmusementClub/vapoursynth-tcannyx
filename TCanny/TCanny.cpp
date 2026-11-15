@@ -267,7 +267,7 @@ void VS_CC tcannyCreate(const VSMap *in, VSMap *out, void *, VSCore *core, const
 
 VS_EXTERNAL_API(void) VapourSynthPluginInit2(VSPlugin *plugin, const VSPLUGINAPI *vspapi) {
     const int apiVersion = vspapi->getAPIVersion() >= VS_MAKE_VERSION(4, 3) ? VAPOURSYNTH_API_VERSION : VS_MAKE_VERSION(4, 2);
-    vspapi->configPlugin("com.mystdove.tcannyx", "tcannyx", "Build an edge map using Canny edge detection (CPU, Vulkan and CUDA backends)", VS_MAKE_VERSION(0, 0), apiVersion, 0, plugin);
+    vspapi->configPlugin("com.mystdove.tcannyx", "tcannyx", "Build an edge map using Canny edge detection (CPU, Vulkan and CUDA backends)", VS_MAKE_VERSION(TCANNY_VERSION, 0), apiVersion, 0, plugin);
     const char *clipType = vspapi->getAPIVersion() >= VS_MAKE_VERSION(4, 3) ? "vnode:all" : "vnode";
     const std::string args = std::string("clip:") + clipType + ";"
         "sigma:float[]:opt;"
